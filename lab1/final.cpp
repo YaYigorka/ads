@@ -2,6 +2,17 @@
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
+#include <limits>
+
+// 2 типа объектов, digitizer и order
+// order знает radix и умеет маппить ключи на их порядковый номер: [0; radix)
+//order принимает на вход ключ и возвращает size_t
+//digitizer знает ширину ключей (общую для всех) и умеет доставать из ключа биты с индексами: [idx; idx + step)
+//метод принимает на вход ключ idx и step и возвращается size_t
+//order - обертка над digitizer, у которой есть еще idx и step
+//radix обязан знать ордер - 1 << step
+//в radix_sort передается digitizer, там он оборачивается order'ом и передается в counting_sort
+
 
 
 struct Item {
@@ -9,6 +20,7 @@ struct Item {
     uint32_t pos;
     uint32_t len;
 };
+
 
 
 template <typename T>
@@ -150,57 +162,85 @@ public:
 };
 
 
-class Solution final{
-private: //for supportive funcs
-    ~Solution() = delete;
 
-    template <typename T>
-    static constexpr std::size_t get_digits_count(T num) noexcept {
-        return sizeof(T) * 8;
+template <typename T>
+class Digitizer final{
+private:
+    std::size_t width_;
+
+public:
+    Digitizer()
+    : width_{std::numeric_limits<T>::is_signed + std::numeric_limits<T>::digits}
+    {
     }
 
-private: //for classes
-    class Digitizer final{
-    private:
-        std::size_t idx_;
-        std::size_t step_;
-        std::size_t width_;
+    template <typename Iterator>
+    std::size_t get_pos(Iterator it, std::size_t index, std::size_t step) const {
+        auto value = it->date;
+        return (value >> index) & ((T{1} << step) - T{1});
+    }
 
-    public:
-        Digitizer(std::size_t idx, std::size_t step, std::size_t width)
-            : idx_{idx}
-            , step_{step}
-            , width_{width}
-        {}
+    std::size_t get_width() const { return width_; }
+};
 
-        std::size_t radix() const { return 1 << step_; }
 
-        template <typename T>
-        std::size_t get_pos(T value) const {
-            return (value >> idx_) & ((T{1} << step_) - T{1}); 
-        }
+class RadixSort final{
+private:
+    std::size_t step_ = 11;
+
+public:
+    RadixSort() = default;
+    RadixSort(std::size_t step) : step_{step} {}
+
+private: //for private classes
+    template <typename Digitizer>
+    class Order {
+        private:
+            std::size_t index_;
+            std::size_t step_;
+            Digitizer digit_;
+
+        public:
+            Order(std::size_t index, std::size_t step, Digitizer digit)
+                : index_{index}
+                , step_{step}
+                , digit_{std::move(digit)}
+            {
+            }
+
+            std::size_t get_index() const { return index_; }
+            std::size_t get_width() const { return digit_.get_width(); }
+            void update_index() { index_ += step_; }
+            std::size_t radix() const { return 1 << step_; }
+
+            template <typename Iterator>
+            std::size_t get_pos(Iterator it) const {
+                return digit_.get_pos(it, index_, step_);
+            }
+
     };
 
 private: //for private funcs
-    template <typename InIter, typename OutIter>
-    static void counting_sort(InIter start_it, InIter end_it,
-                       OutIter out_it, Digitizer digit)
+    template <typename InIter, typename OutIter, typename Digitizer>
+    void counting_sort(
+        InIter start_it, InIter end_it,
+        OutIter out_it, Order<Digitizer> order)
     {
-        std::size_t count[digit.radix()]{};
+        MyVector<std::size_t> count(order.radix());
         
         for (auto it = start_it; it != end_it; ++it) {
-            ++count[digit.get_pos(it->date)];
+            ++count[order.get_pos(it)];
         }
 
-        for (std::size_t i = 1; i != digit.radix(); ++i) {
+        for (std::size_t i = 1; i != order.radix(); ++i) {
             count[i] += count[i - 1];
         }
 
         auto rbegin = std::reverse_iterator(end_it);
         auto rend = std::reverse_iterator(start_it);
         for (auto it = rbegin; it != rend; ++it) {
-            std::size_t pos = count[digit.get_pos(it->date)] - 1;
-            --count[digit.get_pos(it->date)];
+            std::size_t pos = count[order.get_pos(it)] - 1;
+            --count[order.get_pos(it)];
             out_it += pos;
             *out_it = *it;
             out_it -= pos;
@@ -208,35 +248,31 @@ private: //for private funcs
     }
     
 public:
-    template <typename Iterator>
-    static void radix_sort(Iterator start, Iterator end) {
+    template <typename Iterator, typename Digitizer>
+    void radix_sort(Iterator start, Iterator end, Digitizer digit) {
         if (start == end) { return; }
 
+        Order order(0, step_, digit);
+
         std::size_t size = static_cast<std::size_t>(std::distance(start, end));
-        std::size_t idx = 0;
-        std::size_t step = 8;
-        std::size_t width = get_digits_count(start->date);
-
         using T = typename std::iterator_traits<Iterator>::value_type;
-
         MyVector<T> buffer(size);
 
         bool sorted_in_buffer = false;
         auto buffer_start = buffer.begin();
         auto buffer_end = buffer.end();
         
-        while (idx < width) {
-            Digitizer digit{idx, step, width};
+        while (order.get_index() < order.get_width()) {
             
             if (!sorted_in_buffer) {
-                counting_sort(start, end, buffer_start, digit);
+                counting_sort(start, end, buffer_start, order);
                 sorted_in_buffer = true;
             } else {
-                counting_sort(buffer_start, buffer_end, start, digit);
+                counting_sort(buffer_start, buffer_end, start, order);
                 sorted_in_buffer = false;
             }
 
-            idx += step;
+            order.update_index();
         }
 
         if (sorted_in_buffer) {
@@ -249,50 +285,56 @@ public:
 };
 
 
-std::size_t find(const MyVector<char>& line, char c, std::size_t start = 0) {
-    for (std::size_t i = start; i != line.size(); ++i) {
-        if (line[i] == c) {
-            return i;
+
+class Parser final {
+private:
+    template <typename T>
+    static std::size_t find(const T& line, char c, std::size_t start = 0) noexcept {
+        for (std::size_t i = start; i != line.size(); ++i) {
+            if (line[i] == c) {
+                return i;
+            }
         }
+        
+        return -1;
     }
-
-    return -1;
-}
-
-MyVector<char> substr(const MyVector<char>& line, std::size_t start, std::size_t end) {
-    MyVector<char> result;
-    for (std::size_t i = start; i != start + end; ++i) {
-        result.push_back(line[i]);
-    }
-
-    return result;
-}
-
-int stoi(const MyVector<char>& line) {
-    int result = 0;
-    for (std::size_t i = 0; i != line.size(); ++i) {
-        result = result * 10 + (line[i] - '0');
-    }
-
-    return result;
-}
-
-Item parser(const MyVector<char>& line, std::size_t ind) {
-    std::size_t pos1 = find(line, '.');
-    std::size_t pos2 = find(line, '.', pos1 + 1);
-    std::size_t pos3 = find(line, '\t');
     
-    uint8_t day = static_cast<uint8_t>(stoi(substr(line, 0, pos1)));
-    uint8_t month = static_cast<uint8_t>(stoi(substr(line, pos1 + 1, pos2 - pos1 - 1)));
-    uint16_t year = static_cast<uint16_t>(stoi(substr(line, pos2 + 1, pos3 - pos2 - 1)));
-    uint32_t date = static_cast<uint32_t>(year) * 10000 +
-                    static_cast<uint32_t>(month) * 100 + 
-                    static_cast<uint32_t>(day);
-    uint32_t pos = static_cast<uint32_t>(ind);
-    uint32_t len = static_cast<uint32_t>(line.size());
+    template <typename Iterator>
+    static int stoi(Iterator start, Iterator end, std::size_t shift = 0) noexcept {
+        int result = 0;
+        while (start + shift != end) {
+            if (*(start + shift) >= '0' && *(start + shift) <= '9') {
+                result = result * 10 + *(start + shift) - '0';
+            } else {
+                return result;
+            }
+            
+            ++start;
+        }
+        
+        return result;
+    }
     
-    return Item{date, pos, len};
-}
+public:
+    template <typename T>
+    static Item parser(const T& line, std::size_t ind) noexcept {
+        std::size_t pos1 = find(line, '.');
+        std::size_t pos2 = find(line, '.', pos1 + 1);
+        std::size_t pos3 = find(line, '\t');
+        
+        uint8_t day = static_cast<uint8_t>(stoi(line.begin(), line.end()));
+        uint8_t month = static_cast<uint8_t>(stoi(line.begin() + pos1 + 1, line.end()));
+        uint16_t year = static_cast<uint16_t>(stoi(line.begin() + pos2 + 1, line.end()));
+        uint32_t date = static_cast<uint32_t>(year) * 12 * 31 +
+                        static_cast<uint32_t>(month) * 31 + 
+                        static_cast<uint32_t>(day);
+        uint32_t pos = static_cast<uint32_t>(ind);
+        uint32_t len = static_cast<uint32_t>(line.size());
+        
+        return Item{date, pos, len};
+    }
+};
+
 
 
 int main() {
@@ -306,7 +348,7 @@ int main() {
     while (std::cin.get(c)) {
         if (c == '\n') {
             if (line.size() > 0) {
-                vec.push_back(parser(line, pos));
+                vec.push_back(Parser::parser(line, pos));
                 line.clear();
                 pos = all_data.size();
             }
@@ -318,11 +360,13 @@ int main() {
     }
 
     if (line.size() > 0) {
-        vec.push_back(parser(line, pos));
+        vec.push_back(Parser::parser(line, pos));
         line.clear();
     }
-
-    Solution::radix_sort(vec.begin(), vec.end());
+    
+    Digitizer<std::uint32_t> digit;
+    RadixSort rs;
+    rs.radix_sort(vec.begin(), vec.end(), digit);
     
     for (auto& elem : vec) {
         std::cout.write(all_data.data() + elem.pos, elem.len);
