@@ -4,15 +4,6 @@
 #include <iterator>
 #include <limits>
 
-// 2 типа объектов, digitizer и order
-// order знает radix и умеет маппить ключи на их порядковый номер: [0; radix)
-//order принимает на вход ключ и возвращает size_t
-//digitizer знает ширину ключей (общую для всех) и умеет доставать из ключа биты с индексами: [idx; idx + step)
-//метод принимает на вход ключ idx и step и возвращается size_t
-//order - обертка над digitizer, у которой есть еще idx и step
-//radix обязан знать ордер - 1 << step
-//в radix_sort передается digitizer, там он оборачивается order'ом и передается в counting_sort
-
 
 
 struct Item {
