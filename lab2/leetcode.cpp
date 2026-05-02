@@ -24,24 +24,19 @@ public:
         queue<TreeNode*> q{};
         q.push(root);
         
-        std::size_t row_cur{0}, row_end{1};
         int row_max{MIN_INT};
         while (!q.empty()) {
-            if (row_cur == row_end) {
-                row_cur = 0;
-                row_end = q.size();
-                result.push_back(row_max);
-                row_max = MIN_INT;
-                continue;
+            const std::size_t length{q.size()};
+            for (std::size_t i = 0; i < length; ++i) {
+                const TreeNode* current{q.front()};
+                q.pop();
+                if (current->val > row_max) row_max = current->val;
+                if (current->left) q.push(current->left);
+                if (current->right) q.push(current->right);
             }
 
-            TreeNode* current{q.front()};
-            q.pop();
-
-            if (current->val > row_max) row_max = current->val;
-            if (current->left) q.push(current->left);
-            if (current->right) q.push(current->right);
-            ++row_cur;
+            result.push_back(row_max);
+            row_max = MIN_INT;
         }
 
         return result;
